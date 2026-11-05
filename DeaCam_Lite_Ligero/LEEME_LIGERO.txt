@@ -1,0 +1,51 @@
+================================================================================
+  DEACAM PORTAL LITE LIGERO (WINDOWS) - 2 CAMARAS + VIDEOLLAMADA
+  Para equipos modestos (p. ej. Celeron N3150, 4 GB de RAM)
+================================================================================
+Es una copia independiente del portal normal (los archivos de la raiz de DeaCam
+NO se modificaron). Misma llamada, mismo protocolo y mismos puertos: puede
+hablar con un equipo que corra el portal normal.
+
+QUE CAMBIA RESPECTO AL NORMAL (para gastar ~3 veces menos CPU)
+- Video interno 854x480 (normal 1280x720), captura de camara 640x360.
+- 15 fps de video, 10 fps de envio, 8 fps de barrido de camara 2 (normal ~40).
+- Recibo: se descartan cuadros de mas sin decodificar y los JPEG grandes se
+  decodifican a mitad de tamano. El otro equipo puede seguir mandando 1280x720.
+- Pintado en pantalla limitado a 1024 de ancho (en pantalla mayor queda con
+  bordes negros). Se omiten cuadros si la ventana no alcanza a pintarlos.
+- Camaras USB: se recortan a 16:9 (una webcam 4:3 ya no sale estirada) y se
+  abren una por una (evita caidas de OpenCV al abrir 2 camaras a la vez).
+- Si una camara falla al abrir, se reintenta (antes el hilo moria para siempre).
+- Por defecto arranca con 2 webcams USB. Ya NO lleva clave de camaras en el codigo.
+
+INSTALAR (una vez)
+  python -m pip install -r requirements.txt
+  (sin internet: ver DeaCam_wheels_py315 y usar --no-index --find-links)
+
+USAR
+1. Doble clic en iniciar_portal_ligero.bat   (pantalla completa)
+2. F12, Esc, Ctrl+A o clic derecho = Ajustes (camaras, audio, IP del otro equipo).
+3. Camara 1 = principal 1 a 1. Camara 2 = panoramica con barrido; pasa a primer
+   plano cuando nadie interactua.
+   - 2 webcams USB: no hay que cambiar nada (USB 0 y USB 1).
+   - Camaras Dahua/IP: elegir modo RTSP y escribir la URL con usuario y clave:
+       rtsp://USUARIO:CLAVE@192.168.1.109:554/cam/realmonitor?channel=1&subtype=1
+     (subtype=1 = flujo secundario, mas ligero). Pulsar "Aplicar Configuracion".
+4. Si el switch bloquea broadcast: escribir la IP del otro equipo en Ajustes y
+   pulsar "Conectar 2".
+
+RED (Firewall de Windows, entrada y salida)
+  UDP 37990 (descubrimiento) - TCP 37991 (video) - UDP 37992 (audio)
+
+MEDIR Y AJUSTAR EN ESTE EQUIPO
+  python benchmark_ligero.py
+  Imprime la CARGA TOTAL en ms de CPU por cada 1000 ms. Si la de la LIGERA pasa
+  de ~700 el equipo no llega a 15 fps. Entonces, al inicio de portal_lite_24_7.py:
+    CANVAS_W, CANVAS_H = 640, 360     (resolucion interna)
+    RENDER_FPS = 10                   (fps de video)
+    DISPLAY_MAX_W = 800               (ancho de pintado)
+
+PROBAR Y DIAGNOSTICAR
+  python -m unittest test_ligero -v   (9 pruebas)
+  python diagnostico_camara.py        (si una camara abre pero no da imagen)
+================================================================================
