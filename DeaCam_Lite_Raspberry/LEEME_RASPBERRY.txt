@@ -1,0 +1,49 @@
+================================================================================
+        DEACAM PORTAL LITE 24/7 — EDICION RASPBERRY PI (LISTA PARA COMPARTIR)
+================================================================================
+
+Esta carpeta contiene la version ligera de DeaCam optimizada especificamente
+para Raspberry Pi (Pi 4 y Pi 5 con Raspberry Pi OS Desktop):
+- Modo 1 a 1 limpio en Pantalla Completa sin bordes.
+- Llamada grupal automatica hasta 3 participantes en red local.
+- Zoom Dinamico Suave con IA al mirar a la camara.
+- Oscilacion suave (paneo izquierda <-> derecha) si no hay personas en cuadro.
+- Audio bidireccional continuo con microfono y parlante activos.
+- Menu flotante de configuracion accesible pulsando F12, Esc o Clic Derecho.
+- Watchdog 24/7 que desactiva suspension de pantalla y recupera la llamada solo.
+
+--------------------------------------------------------------------------------
+ARCHIVOS Y COMO USARLOS EN RASPBERRY PI
+--------------------------------------------------------------------------------
+
+1. DAR PERMISOS DE EJECUCION (PRIMERA VEZ):
+   Abre una terminal en esta carpeta y ejecuta:
+   👉 chmod +x *.sh
+
+2. PROBAR LA LLAMADA EN EL RASPBERRY PI (TESTER INCLUIDO):
+   Ejecuta:
+   👉 ./probar_llamada_rpi.sh
+   Abrira la videollamada en Pantalla Completa y conectara un participante
+   simulado para verificar video, audio y zooms en vivo.
+
+3. INSTALAR AUTO-ARRANQUE TRAS CORTES DE ENERGIA ELECTRICA:
+   Ejecuta:
+   👉 ./instalar_autoarranque_rpi.sh
+   Instala paquetes del sistema (PortAudio, Tkinter, X11), dependencias Python
+   y registra el autostart en ~/.config/autostart. Si el Raspberry Pi pierde luz
+   y vuelve a encender, abrira el portal 24/7 solo sin intervencion humana.
+
+4. DESINSTALAR AUTO-ARRANQUE:
+   Ejecuta:
+   👉 ./desinstalar_autoarranque_rpi.sh
+
+5. INICIAR EL PORTAL MANUALMENTE:
+   Ejecuta:
+   👉 ./iniciar_portal_lite.sh
+   Mantiene el portal corriendo 24/7 con reinicio automatico ante caidas.
+
+6. APAGAR Y DETENER TODO:
+   Ejecuta:
+   👉 ./apagar_portal_rpi.sh
+   Cierra el portal, el audio, los sockets y los demonios con 1 comando.
+================================================================================

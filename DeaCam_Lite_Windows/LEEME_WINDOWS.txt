@@ -1,0 +1,50 @@
+================================================================================
+          DEACAM PORTAL LITE 24/7 — EDICION WINDOWS (LISTA PARA COMPARTIR)
+================================================================================
+
+Esta carpeta contiene la version ligera de DeaCam optimizada especificamente
+para computadoras con WINDOWS (10 y 11):
+- Modo 1 a 1 limpio en Pantalla Completa sin bordes.
+- Llamada grupal automatica hasta 3 participantes en red local.
+- Zoom Dinamico Suave con IA al mirar a la camara.
+- Oscilacion suave (paneo izquierda <-> derecha) si no hay personas en cuadro.
+- Audio bidireccional continuo con microfono y parlante activos.
+- Menu flotante de configuracion accesible pulsando F12, Esc o Clic Derecho.
+
+--------------------------------------------------------------------------------
+ARCHIVOS Y COMO USARLOS EN WINDOWS
+--------------------------------------------------------------------------------
+
+1. PROBAR LA LLAMADA EN ESTA COMPUTADORA:
+   Haz doble clic en:
+   👉 probar_llamada_windows.bat
+   Abrira la videollamada en Pantalla Completa y conectara un participante
+   simulado para que veas el video 1 a 1, el audio y los zooms en vivo.
+
+2. INSTALAR AUTO-ARRANQUE TRAS CORTES DE ENERGIA ELECTRICA:
+   Haz doble clic en:
+   👉 instalar_autoarranque_windows.bat
+   Crea un acceso directo en shell:startup. Si la computadora pierde electricidad
+   y vuelve a encender, abrira el portal 24/7 automaticamente.
+
+3. DESINSTALAR AUTO-ARRANQUE:
+   Haz doble clic en:
+   👉 desinstalar_autoarranque_windows.bat
+
+4. INICIAR EL PORTAL MANUALMENTE:
+   Haz doble clic en:
+   👉 iniciar_portal_lite.bat
+   Mantiene el portal corriendo 24/7 con reinicio automatico ante cierres.
+
+5. APAGAR Y DETENER TODO:
+   Haz doble clic en:
+   👉 apagar_portal_windows.bat
+   Cierra el portal, el audio, los sockets y los guardianes con 1 clic.
+
+--------------------------------------------------------------------------------
+REQUISITOS EN WINDOWS
+--------------------------------------------------------------------------------
+- Python 3.10 o superior (marcar la casilla 'Add python.exe to PATH' al instalar).
+- Instalar dependencias una sola vez (si no las tienes ya):
+    pip install -r requirements.txt
+================================================================================

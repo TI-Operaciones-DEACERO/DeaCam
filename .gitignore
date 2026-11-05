@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.zip
+*.tar.gz
+.vscode/
+.idea/
+config_portal.json
+DeaCam_Lite_Windows/config_portal.json
+DeaCam_Lite_Raspberry/config_portal.json
+capturas/
+evidencias_mal_uso/
