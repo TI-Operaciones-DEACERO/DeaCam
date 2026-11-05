@@ -89,14 +89,18 @@ class PortalLiteApp:
 
         self.status_banner_var = tk.StringVar(value="Iniciando Portal Lite 24/7...")
         self.target_peer_ip_var = tk.StringVar(value="")
+        self.target_peer_ip2_var = tk.StringVar(value="")
 
         self._load_config()
 
         # Componentes Core
         self.mesh_node = MultiPeerMeshNode()
-        target_ip_val = self.target_peer_ip_var.get().strip()
-        if target_ip_val:
-            self.mesh_node.set_target_peers([target_ip_val])
+        target_ips = [
+            ip for ip in [self.target_peer_ip_var.get().strip(), self.target_peer_ip2_var.get().strip()]
+            if ip and not ip.startswith("Auto")
+        ]
+        if target_ips:
+            self.mesh_node.set_target_peers(target_ips)
         self.pipeline = LiteVideoPipeline(self.models_dir)
         self.sweeper = PanoramicSweeper(speed=float(self.cam2_sweep_speed_var.get()))
         self.grabber1: Optional[UniversalCameraGrabber] = None
@@ -192,8 +196,23 @@ class PortalLiteApp:
                 tip = str(cfg["target_peer_ip"]).strip()
                 if not tip.startswith("Auto"):
                     self.target_peer_ip_var.set(tip)
+            if "target_peer_ip2" in cfg:
+                tip2 = str(cfg["target_peer_ip2"]).strip()
+                if not tip2.startswith("Auto"):
+                    self.target_peer_ip2_var.set(tip2)
         except Exception:
             pass
+
+    def _sync_peers_to_node(self):
+        targets = []
+        p1 = self.target_peer_ip_var.get().strip()
+        p2 = self.target_peer_ip2_var.get().strip()
+        if p1 and not p1.startswith("Auto"):
+            targets.append(p1)
+        if p2 and not p2.startswith("Auto"):
+            targets.append(p2)
+        self.mesh_node.set_target_peers(targets)
+        self.save_config()
 
     def save_config(self):
         try:
@@ -225,6 +244,7 @@ class PortalLiteApp:
                 "max_zoom": float(self.max_zoom_var.get()),
                 "mirror_mode": bool(self.mirror_mode_var.get()),
                 "target_peer_ip": self.target_peer_ip_var.get().strip() or "Auto-Descubrimiento LAN P2P (24/7)",
+                "target_peer_ip2": self.target_peer_ip2_var.get().strip(),
             })
             with open(self.config_path, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, indent=2, ensure_ascii=False)
@@ -587,7 +607,7 @@ class PortalLiteApp:
 
         win = tk.Toplevel(self.root)
         win.title("Ajustes de Videollamada 24/7 (Audio, Cámara y Enfoque)")
-        win.geometry("560x730")
+        win.geometry("580x790")
         win.configure(bg="#0b0f19", padx=16, pady=14)
         win.transient(self.root)
 
@@ -607,20 +627,21 @@ class PortalLiteApp:
             return body
 
         # --- TARJETA 1: ENLACE P2P Y CONEXIÓN DIRECTA POR IP ---
-        net_card = _make_card("🌐 1. Conexión de Red P2P (Llamada 1 a 1)", accent="#38bdf8")
+        net_card = _make_card("🌐 1. Conexión de Red P2P (Llamada 1 a 1 y Grupal hasta 3)", accent="#38bdf8")
 
         my_ips = [ip for ip in self.mesh_node.local_ips if not ip.startswith("127.")]
         my_ips_str = ", ".join(my_ips) if my_ips else "Detectando..."
         my_ip_row = tk.Frame(net_card, bg=theme_card)
         my_ip_row.pack(fill=tk.X, pady=(0, 4))
-        tk.Label(my_ip_row, text="Mi IP Local (Compártela con el otro usuario):", bg=theme_card, fg="#94a3b8", font=("Segoe UI", 8)).pack(side=tk.LEFT)
+        tk.Label(my_ip_row, text="Mi IP Local (Dile esta IP a tus compañeros):", bg=theme_card, fg="#94a3b8", font=("Segoe UI", 8)).pack(side=tk.LEFT)
         tk.Label(my_ip_row, text=my_ips_str, bg=theme_card, fg="#38bdf8", font=("Segoe UI", 9, "bold")).pack(side=tk.RIGHT)
 
-        tip_row = tk.Frame(net_card, bg=theme_card)
-        tip_row.pack(fill=tk.X, pady=2)
-        tk.Label(tip_row, text="IP del Otro Equipo:", bg=theme_card, fg="#f8fafc", font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT)
+        # Integrante 2
+        tip1_row = tk.Frame(net_card, bg=theme_card)
+        tip1_row.pack(fill=tk.X, pady=2)
+        tk.Label(tip1_row, text="IP Integrante 2:", bg=theme_card, fg="#f8fafc", font=("Segoe UI", 8, "bold"), width=15, anchor="w").pack(side=tk.LEFT)
         tk.Entry(
-            tip_row,
+            tip1_row,
             textvariable=self.target_peer_ip_var,
             bg="#0b0f19",
             fg="#f8fafc",
@@ -629,28 +650,88 @@ class PortalLiteApp:
             highlightcolor="#38bdf8",
             highlightthickness=1,
             font=("Segoe UI", 9),
-            width=20,
-        ).pack(side=tk.LEFT, padx=6)
+            width=18,
+        ).pack(side=tk.LEFT, padx=4)
 
-        def _do_direct_connect():
-            target = self.target_peer_ip_var.get().strip()
-            if target:
-                self.mesh_node.set_target_peers([target])
-                self.save_config()
-                threading.Thread(target=lambda: self.mesh_node.connect_to_peer(target), daemon=True).start()
+        def _connect_p1():
+            t1 = self.target_peer_ip_var.get().strip()
+            if t1:
+                self._sync_peers_to_node()
+                threading.Thread(target=lambda: self.mesh_node.connect_to_peer(t1), daemon=True).start()
 
         tk.Button(
-            tip_row,
-            text="🔗 Conectar Directo",
-            command=_do_direct_connect,
+            tip1_row,
+            text="🔗 Conectar 2",
+            command=_connect_p1,
             bg="#0284c7",
             fg="#ffffff",
             relief=tk.FLAT,
             font=("Segoe UI", 8, "bold"),
-            padx=8,
-            pady=2,
+            padx=6,
+            pady=1,
             cursor="hand2",
         ).pack(side=tk.RIGHT)
+
+        # Integrante 3 (Tercer Integrante)
+        tip2_row = tk.Frame(net_card, bg=theme_card)
+        tip2_row.pack(fill=tk.X, pady=2)
+        tk.Label(tip2_row, text="IP Integrante 3:", bg=theme_card, fg="#34d399", font=("Segoe UI", 8, "bold"), width=15, anchor="w").pack(side=tk.LEFT)
+        tk.Entry(
+            tip2_row,
+            textvariable=self.target_peer_ip2_var,
+            bg="#0b0f19",
+            fg="#f8fafc",
+            relief=tk.FLAT,
+            highlightbackground=theme_border,
+            highlightcolor="#38bdf8",
+            highlightthickness=1,
+            font=("Segoe UI", 9),
+            width=18,
+        ).pack(side=tk.LEFT, padx=4)
+
+        def _connect_p2():
+            t2 = self.target_peer_ip2_var.get().strip()
+            if t2:
+                self._sync_peers_to_node()
+                threading.Thread(target=lambda: self.mesh_node.connect_to_peer(t2), daemon=True).start()
+
+        tk.Button(
+            tip2_row,
+            text="🔗 Conectar 3",
+            command=_connect_p2,
+            bg="#059669",
+            fg="#ffffff",
+            relief=tk.FLAT,
+            font=("Segoe UI", 8, "bold"),
+            padx=6,
+            pady=1,
+            cursor="hand2",
+        ).pack(side=tk.RIGHT)
+
+        # Botón Enlazar Grupo (Todos)
+        all_row = tk.Frame(net_card, bg=theme_card)
+        all_row.pack(fill=tk.X, pady=(4, 0))
+
+        def _connect_all():
+            self._sync_peers_to_node()
+            t1 = self.target_peer_ip_var.get().strip()
+            t2 = self.target_peer_ip2_var.get().strip()
+            if t1:
+                threading.Thread(target=lambda: self.mesh_node.connect_to_peer(t1), daemon=True).start()
+            if t2:
+                threading.Thread(target=lambda: self.mesh_node.connect_to_peer(t2), daemon=True).start()
+
+        tk.Button(
+            all_row,
+            text="👥 Enlazar a Ambos Integrantes (Llamada Grupal de 3)",
+            command=_connect_all,
+            bg="#4338ca",
+            fg="#ffffff",
+            relief=tk.FLAT,
+            font=("Segoe UI", 8, "bold"),
+            pady=3,
+            cursor="hand2",
+        ).pack(fill=tk.X)
 
         # --- TARJETA 2: CONEXIÓN DE AUDIO (MICRÓFONO Y PARLANTE) ---
         aud_card = _make_card("🔊 2. Micrófono y Parlante (Altavoz)", accent="#10b981")
