@@ -212,3 +212,57 @@ class LiteVideoPipeline:
             "state": state_label,
         }
         return out, stats
+
+
+class PanoramicSweeper:
+    """
+    Barrido Panorámico Cinemático para Cámara Secundaria:
+    - Realiza un barrido continuo y ultra suave de izquierda a derecha y de regreso.
+    - Cuando nadie interactúa en la llamada, esta cámara pasa a Primer Plano.
+    - Cuando hay interacción en la llamada, se reduce a un recuadro pequeño (PiP).
+    """
+
+    def __init__(self, speed: float = 0.05, span: float = 0.28):
+        self.speed = speed      # Velocidad de ciclo sinusoidal (muy suave y cinematográfico)
+        self.span = span        # Amplitud de paneo horizontal
+        self.t0 = time.time()
+        self.cur_pan = 0.5
+
+    def process_sweep(self, raw_bgr: np.ndarray, target_size: Tuple[int, int] = (1280, 720)) -> np.ndarray:
+        if raw_bgr is None or raw_bgr.size == 0:
+            return np.zeros((target_size[1], target_size[0], 3), dtype=np.uint8)
+
+        h, w = raw_bgr.shape[:2]
+        tw, th = target_size
+        elapsed = time.time() - self.t0
+
+        # Oscilación sinusoidal izquierda <-> derecha continua
+        phase = math.sin(elapsed * self.speed * 2.0 * math.pi)
+        target_pan = 0.5 + phase * self.span
+
+        # Filtro de resorte suave para evitar aceleraciones bruscas
+        self.cur_pan += (target_pan - self.cur_pan) * 0.06
+        pan_x = max(0.15, min(0.85, self.cur_pan))
+
+        # Recorte panorámico con zoom 1.20x para permitir el barrido lateral
+        crop_zoom = 1.22
+        view_w = float(w) / crop_zoom
+        view_h = float(h) / crop_zoom
+
+        center_x = pan_x * float(w)
+        center_y = float(h) * 0.5
+
+        x0 = max(0.0, min(float(w) - view_w, center_x - view_w * 0.5))
+        y0 = max(0.0, min(float(h) - view_h, center_y - view_h * 0.5))
+
+        sx = float(tw) / view_w
+        sy = float(th) / view_h
+        M = np.array(
+            [
+                [sx, 0.0, -x0 * sx],
+                [0.0, sy, -y0 * sy],
+            ],
+            dtype=np.float32,
+        )
+        return cv2.warpAffine(raw_bgr, M, (tw, th), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+

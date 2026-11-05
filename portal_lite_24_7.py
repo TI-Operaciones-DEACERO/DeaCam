@@ -38,7 +38,7 @@ from p2p_portal import (
     get_local_lan_ips,
 )
 from p2p_mesh_lite import MultiPeerMeshNode
-from lite_pipeline import LiteVideoPipeline
+from lite_pipeline import LiteVideoPipeline, PanoramicSweeper
 
 
 class PortalLiteApp:
@@ -72,6 +72,14 @@ class PortalLiteApp:
         self.usb_cam_var = tk.StringVar(value="USB 0: Cámara Local / Webcam Predeterminada")
         self.custom_rtsp_var = tk.StringVar(value="rtsp://admin:SomosUnaFamilia2025.@192.168.1.109:554/cam/realmonitor?channel=1&subtype=0")
 
+        # Variables de Cámara Secundaria (Panorámica con Barrido Izq <-> Der)
+        self.enable_cam2_var = tk.BooleanVar(value=True)
+        self.auto_swap_cam2_var = tk.BooleanVar(value=True)
+        self.cam2_source_mode_var = tk.StringVar(value="Dahua PoE Cámara 2 (RTSP Panorámica)")
+        self.custom_rtsp2_var = tk.StringVar(value="rtsp://admin:SomosUnaFamilia2025.@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0")
+        self.usb_cam2_var = tk.StringVar(value="USB 1: Segunda Webcam")
+        self.cam2_sweep_speed_var = tk.DoubleVar(value=0.05)
+
         self.mirror_mode_var = tk.BooleanVar(value=True)
         self.dynamic_zoom_var = tk.BooleanVar(value=True)
         self.idle_patrol_var = tk.BooleanVar(value=True)
@@ -90,7 +98,10 @@ class PortalLiteApp:
         if target_ip_val:
             self.mesh_node.set_target_peers([target_ip_val])
         self.pipeline = LiteVideoPipeline(self.models_dir)
-        self.grabber: Optional[UniversalCameraGrabber] = None
+        self.sweeper = PanoramicSweeper(speed=float(self.cam2_sweep_speed_var.get()))
+        self.grabber1: Optional[UniversalCameraGrabber] = None
+        self.grabber2: Optional[UniversalCameraGrabber] = None
+        self.last_interaction_ts = time.time()
 
         # Sincronizar audio con el nodo mesh
         self._sync_audio_settings()
@@ -162,6 +173,21 @@ class PortalLiteApp:
                 self.max_zoom_var.set(float(cfg["max_zoom"]))
             if "mirror_mode" in cfg:
                 self.mirror_mode_var.set(bool(cfg["mirror_mode"]))
+            if "enable_cam2" in cfg:
+                self.enable_cam2_var.set(bool(cfg["enable_cam2"]))
+            if "auto_swap_cam2" in cfg:
+                self.auto_swap_cam2_var.set(bool(cfg["auto_swap_cam2"]))
+            if "cam2_source_mode" in cfg:
+                self.cam2_source_mode_var.set(str(cfg["cam2_source_mode"]))
+            if "custom_rtsp2" in cfg:
+                self.custom_rtsp2_var.set(str(cfg["custom_rtsp2"]))
+            if "usb_cam2" in cfg:
+                self.usb_cam2_var.set(str(cfg["usb_cam2"]))
+            if "cam2_sweep_speed" in cfg:
+                spd = float(cfg["cam2_sweep_speed"])
+                self.cam2_sweep_speed_var.set(spd)
+                if hasattr(self, "sweeper"):
+                    self.sweeper.speed = spd
             if "target_peer_ip" in cfg:
                 tip = str(cfg["target_peer_ip"]).strip()
                 if not tip.startswith("Auto"):
@@ -189,6 +215,12 @@ class PortalLiteApp:
                 "camera_source_mode": self.camera_source_mode_var.get(),
                 "usb_cam1": self.usb_cam_var.get(),
                 "custom_rtsp1": self.custom_rtsp_var.get(),
+                "enable_cam2": bool(self.enable_cam2_var.get()),
+                "auto_swap_cam2": bool(self.auto_swap_cam2_var.get()),
+                "cam2_source_mode": self.cam2_source_mode_var.get(),
+                "custom_rtsp2": self.custom_rtsp2_var.get(),
+                "usb_cam2": self.usb_cam2_var.get(),
+                "cam2_sweep_speed": float(self.cam2_sweep_speed_var.get()),
                 "smooth_omega": float(self.smooth_omega_var.get()),
                 "max_zoom": float(self.max_zoom_var.get()),
                 "mirror_mode": bool(self.mirror_mode_var.get()),
@@ -200,9 +232,10 @@ class PortalLiteApp:
             pass
 
     def start_camera_grabber(self):
-        if self.grabber is not None:
-            self.grabber.stop()
-            self.grabber = None
+        # 1. Cámara 1 (Principal 1 a 1)
+        if self.grabber1 is not None:
+            self.grabber1.stop()
+            self.grabber1 = None
 
         cam_mode = self.camera_source_mode_var.get()
         mirror_func = lambda: self.mirror_mode_var.get()
@@ -214,25 +247,62 @@ class PortalLiteApp:
                 if ch.isdigit():
                     usb_idx = ch
                     break
-            self.grabber = UniversalCameraGrabber(
+            self.grabber1 = UniversalCameraGrabber(
                 f"USB:{usb_idx}",
                 mirror_fn=mirror_func,
                 source_type="usb",
             )
         elif cam_mode.startswith("Cámara IP Universal"):
-            self.grabber = UniversalCameraGrabber(
+            self.grabber1 = UniversalCameraGrabber(
                 self.custom_rtsp_var.get().strip(),
                 mirror_fn=mirror_func,
                 source_type="rtsp",
             )
         else:
-            # Dahua PoE Predeterminada (Subflujo HD Zero-Lag)
+            # Dahua PoE 1 Predeterminada (Subflujo HD Zero-Lag)
             rtsp_url = self.custom_rtsp_var.get().strip()
-            self.grabber = UniversalCameraGrabber(
+            self.grabber1 = UniversalCameraGrabber(
                 rtsp_url,
                 mirror_fn=mirror_func,
                 source_type="rtsp",
             )
+
+        # 2. Cámara 2 (Secundaria Panorámica con Barrido)
+        if self.grabber2 is not None:
+            self.grabber2.stop()
+            self.grabber2 = None
+
+        if self.enable_cam2_var.get():
+            cam2_mode = self.cam2_source_mode_var.get()
+            if cam2_mode.startswith("Cámara USB"):
+                usb2_lbl = self.usb_cam2_var.get()
+                usb2_idx = "1"
+                for ch in usb2_lbl.split():
+                    if ch.isdigit():
+                        usb2_idx = ch
+                        break
+                self.grabber2 = UniversalCameraGrabber(
+                    f"USB:{usb2_idx}",
+                    mirror_fn=lambda: False,
+                    source_type="usb",
+                )
+            elif cam2_mode.startswith("Cámara IP"):
+                self.grabber2 = UniversalCameraGrabber(
+                    self.custom_rtsp2_var.get().strip(),
+                    mirror_fn=lambda: False,
+                    source_type="rtsp",
+                )
+            else:
+                # Dahua PoE Cámara 2 (192.168.1.108 Panorámica)
+                rtsp2_url = self.custom_rtsp2_var.get().strip()
+                self.grabber2 = UniversalCameraGrabber(
+                    rtsp2_url,
+                    mirror_fn=lambda: False,
+                    source_type="rtsp",
+                )
+
+        if hasattr(self, "sweeper"):
+            self.sweeper.speed = float(self.cam2_sweep_speed_var.get())
 
     def _build_fullscreen_ui(self):
         sw = self.root.winfo_screenwidth()
@@ -329,6 +399,7 @@ class PortalLiteApp:
                 pass
 
     def _on_activity(self, event=None):
+        self.last_interaction_ts = time.time()
         try:
             self.root.config(cursor="arrow")
             self.gear_btn.place(relx=0.985, rely=0.015, anchor="ne")
@@ -357,7 +428,8 @@ class PortalLiteApp:
                 count, msg = self.mesh_node.get_status_summary()
                 mic_state = "🎤 ON" if self.enable_mic_var.get() else "🔇 MUTE"
                 spk_state = "🔊 ON" if self.enable_speaker_var.get() else "🔈 OFF"
-                self.status_banner_var.set(f"{msg}  |  {mic_state}  |  {spk_state}")
+                c2_state = "📹 Cam2 Pan ON" if self.enable_cam2_var.get() else "📹 Cam2 OFF"
+                self.status_banner_var.set(f"{msg}  |  {mic_state}  |  {spk_state}  |  {c2_state}")
             except Exception:
                 pass
             time.sleep(1.2)
@@ -367,10 +439,10 @@ class PortalLiteApp:
         while self.running:
             t0 = time.time()
 
-            raw_local, _, ok_local = self.grabber.get_latest() if self.grabber else (None, 0, False)
+            # 1. Cuadro de Cámara 1 (Principal 1 a 1)
+            raw_local, _, ok_local = self.grabber1.get_latest() if self.grabber1 else (None, 0, False)
             remote_streams = self.mesh_node.get_remote_streams()
 
-            # Procesar cuadro local con cabezal cinemático y zoom dinámico suave
             local_processed = None
             if ok_local and raw_local is not None:
                 local_processed, stats = self.pipeline.process_frame(
@@ -381,18 +453,26 @@ class PortalLiteApp:
                     smooth_omega=float(self.smooth_omega_var.get()),
                     target_size=(cw, ch),
                 )
+                if stats.get("faces", 0) > 0:
+                    self.last_interaction_ts = time.time()
                 # Difundir a la red P2P Mesh 24/7
                 self.mesh_node.send_local_video_frame(local_processed)
 
-            # Composición de la Pantalla Completa según participantes activos (Máximo 3)
-            # Caso 0: Sin participantes remotos -> Muestra nuestro espejo local con zoom suave
+            # 2. Cuadro de Cámara 2 (Secundaria Panorámica con Barrido)
+            cam2_swept = None
+            if self.enable_cam2_var.get() and self.grabber2:
+                raw2, _, ok2 = self.grabber2.get_latest()
+                if ok2 and raw2 is not None:
+                    cam2_swept = self.sweeper.process_sweep(raw2, target_size=(cw, ch))
+
+            # 3. Composición de la señal de llamada (1 a 1, Espejo o Grupal de 3)
             if not remote_streams:
                 if local_processed is not None:
-                    final_canvas = local_processed
+                    call_canvas = local_processed
                 else:
-                    final_canvas = np.full((ch, cw, 3), 12, dtype=np.uint8)
+                    call_canvas = np.full((ch, cw, 3), 12, dtype=np.uint8)
                     cv2.putText(
-                        final_canvas,
+                        call_canvas,
                         "ESPERANDO ENLACE DE LLAMADA 24/7 EN RED LOCAL...",
                         (int(cw * 0.18), int(ch * 0.5)),
                         cv2.FONT_HERSHEY_SIMPLEX,
@@ -401,48 +481,62 @@ class PortalLiteApp:
                         2,
                         cv2.LINE_AA,
                     )
-
-            # Caso 1: Conexión 1 a 1 exacta (2 participantes en total: Tú y el Otro)
             elif len(remote_streams) == 1:
                 r_frame = remote_streams[0]["frame"]
                 if r_frame.shape[1] != cw or r_frame.shape[0] != ch:
                     r_frame = cv2.resize(r_frame, (cw, ch), interpolation=cv2.INTER_LINEAR)
+                call_canvas = r_frame.copy()
+            else:
+                call_canvas = np.full((ch, cw, 3), 10, dtype=np.uint8)
+                half_w = cw // 2
+                half_h = ch
 
-                final_canvas = r_frame.copy()
-                # Si el usuario quiere PiP propio en esquina (opcional)
+                r1 = remote_streams[0]["frame"]
+                r1_res = cv2.resize(r1, (half_w, half_h), interpolation=cv2.INTER_LINEAR)
+                call_canvas[:, :half_w] = r1_res
+
+                r2 = remote_streams[1]["frame"]
+                r2_res = cv2.resize(r2, (half_w, half_h), interpolation=cv2.INTER_LINEAR)
+                call_canvas[:, half_w:] = r2_res
+                cv2.line(call_canvas, (half_w, 0), (half_w, ch), (56, 189, 248), 2)
+
+            # 4. Dinámica de Inactividad vs Interacción (Primer Plano vs PiP pequeño)
+            # ¿Nadie interactúa por > 6 segundos?
+            is_idle = (time.time() - self.last_interaction_ts > 6.0)
+
+            if cam2_swept is not None and self.enable_cam2_var.get():
+                if is_idle and self.auto_swap_cam2_var.get():
+                    # MODO INACTIVO: Cámara Panorámica en PRIMER PLANO (Pantalla Completa)
+                    final_canvas = cam2_swept.copy()
+                    # Vista de la llamada en PiP pequeño en esquina
+                    pw, ph = int(cw * 0.24), int(ch * 0.24)
+                    call_small = cv2.resize(call_canvas, (pw, ph), interpolation=cv2.INTER_LINEAR)
+                    x0 = cw - pw - 24
+                    y0 = ch - ph - 24
+                    cv2.rectangle(final_canvas, (x0 - 2, y0 - 2), (x0 + pw + 2, y0 + ph + 2), (56, 189, 248), 2)
+                    final_canvas[y0 : y0 + ph, x0 : x0 + pw] = call_small
+                    cv2.rectangle(final_canvas, (x0, y0), (x0 + 85, y0 + 18), (15, 23, 42), -1)
+                    cv2.putText(final_canvas, "LLAMADA", (x0 + 6, y0 + 13), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (56, 189, 248), 1, cv2.LINE_AA)
+                else:
+                    # MODO ACTIVO: Llamada 1 a 1 en PRIMER PLANO (Pantalla Completa)
+                    final_canvas = call_canvas.copy()
+                    # Cámara Panorámica en PiP pequeño en esquina con barrido
+                    pw, ph = int(cw * 0.24), int(ch * 0.24)
+                    pan_small = cv2.resize(cam2_swept, (pw, ph), interpolation=cv2.INTER_LINEAR)
+                    x0 = cw - pw - 24
+                    y0 = ch - ph - 24
+                    cv2.rectangle(final_canvas, (x0 - 2, y0 - 2), (x0 + pw + 2, y0 + ph + 2), (56, 189, 248), 2)
+                    final_canvas[y0 : y0 + ph, x0 : x0 + pw] = pan_small
+                    cv2.rectangle(final_canvas, (x0, y0), (x0 + 110, y0 + 18), (15, 23, 42), -1)
+                    cv2.putText(final_canvas, "PANORÁMICA", (x0 + 6, y0 + 13), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (56, 189, 248), 1, cv2.LINE_AA)
+            else:
+                final_canvas = call_canvas
+                # PiP de mi propia cámara si el usuario lo activó
                 if self.pip_self_var.get() and local_processed is not None:
                     pw, ph = int(cw * 0.22), int(ch * 0.22)
                     p_small = cv2.resize(local_processed, (pw, ph), interpolation=cv2.INTER_LINEAR)
                     x0 = cw - pw - 24
                     y0 = ch - ph - 24
-                    cv2.rectangle(final_canvas, (x0 - 2, y0 - 2), (x0 + pw + 2, y0 + ph + 2), (56, 189, 248), 2)
-                    final_canvas[y0 : y0 + ph, x0 : x0 + pw] = p_small
-
-            # Caso 2: Llamada Grupal de 3 participantes (Tú + 2 Remotos)
-            else:
-                final_canvas = np.full((ch, cw, 3), 10, dtype=np.uint8)
-                half_w = cw // 2
-                half_h = ch
-
-                # Participante Remoto 1 (Lado Izquierdo)
-                r1 = remote_streams[0]["frame"]
-                r1_res = cv2.resize(r1, (half_w, half_h), interpolation=cv2.INTER_LINEAR)
-                final_canvas[:, :half_w] = r1_res
-
-                # Participante Remoto 2 (Lado Derecho)
-                r2 = remote_streams[1]["frame"]
-                r2_res = cv2.resize(r2, (half_w, half_h), interpolation=cv2.INTER_LINEAR)
-                final_canvas[:, half_w:] = r2_res
-
-                # Línea divisoria sutil neón
-                cv2.line(final_canvas, (half_w, 0), (half_w, ch), (56, 189, 248), 2)
-
-                # PiP propio en centro inferior (opcional)
-                if self.pip_self_var.get() and local_processed is not None:
-                    pw, ph = int(cw * 0.20), int(ch * 0.20)
-                    p_small = cv2.resize(local_processed, (pw, ph), interpolation=cv2.INTER_LINEAR)
-                    x0 = (cw - pw) // 2
-                    y0 = ch - ph - 20
                     cv2.rectangle(final_canvas, (x0 - 2, y0 - 2), (x0 + pw + 2, y0 + ph + 2), (56, 189, 248), 2)
                     final_canvas[y0 : y0 + ph, x0 : x0 + pw] = p_small
 
@@ -637,10 +731,11 @@ class PortalLiteApp:
             cursor="hand2",
         ).pack(side=tk.RIGHT)
 
-        # --- TARJETA 3: ENTRADA DE CÁMARA UNIVERSAL ---
-        cam_card = _make_card("📷 3. Selección de Cámara", accent="#38bdf8")
+        # --- TARJETA 3: CONFIGURACIÓN DE CÁMARAS (PRINCIPAL Y SECUNDARIA PANORÁMICA) ---
+        cam_card = _make_card("📷 3. Selección de Cámaras (Principal y Secundaria Panorámica)", accent="#38bdf8")
 
-        tk.Label(cam_card, text="Tipo de Cámara:", bg=theme_card, fg="#94a3b8", font=("Segoe UI", 8)).pack(anchor="w")
+        # Cámara 1 (Principal 1 a 1)
+        tk.Label(cam_card, text="Cámara 1 (Principal 1 a 1):", bg=theme_card, fg="#38bdf8", font=("Segoe UI", 8, "bold")).pack(anchor="w")
         cam_mode_cb = ttk.Combobox(
             cam_card,
             textvariable=self.camera_source_mode_var,
@@ -651,9 +746,7 @@ class PortalLiteApp:
             ],
             state="readonly",
         )
-        cam_mode_cb.pack(fill=tk.X, pady=(2, 6))
-
-        tk.Label(cam_card, text="Cámara USB Local / URL RTSP:", bg=theme_card, fg="#94a3b8", font=("Segoe UI", 8)).pack(anchor="w")
+        cam_mode_cb.pack(fill=tk.X, pady=(1, 3))
         tk.Entry(
             cam_card,
             textvariable=self.custom_rtsp_var,
@@ -664,11 +757,59 @@ class PortalLiteApp:
             highlightcolor="#38bdf8",
             highlightthickness=1,
             font=("Segoe UI", 8),
-        ).pack(fill=tk.X, pady=(2, 4))
+        ).pack(fill=tk.X, pady=(0, 5))
+
+        # Cámara 2 (Secundaria Panorámica con Barrido)
+        tk.Checkbutton(
+            cam_card,
+            text="📹 Activar Cámara 2 (Secundaria con Barrido Panorámico):",
+            variable=self.enable_cam2_var,
+            bg=theme_card,
+            fg="#34d399",
+            selectcolor="#0b0f19",
+            activebackground=theme_card,
+            font=("Segoe UI", 8, "bold"),
+            anchor="w",
+        ).pack(fill=tk.X, pady=(2, 1))
+
+        cam2_mode_cb = ttk.Combobox(
+            cam_card,
+            textvariable=self.cam2_source_mode_var,
+            values=[
+                "Dahua PoE Cámara 2 (RTSP Panorámica)",
+                "Cámara USB Secundaria (Webcam 2)",
+                "Cámara IP Universal (URL RTSP / HTTP / ONVIF)",
+            ],
+            state="readonly",
+        )
+        cam2_mode_cb.pack(fill=tk.X, pady=(1, 3))
+        tk.Entry(
+            cam_card,
+            textvariable=self.custom_rtsp2_var,
+            bg="#0b0f19",
+            fg="#f8fafc",
+            relief=tk.FLAT,
+            highlightbackground=theme_border,
+            highlightcolor="#38bdf8",
+            highlightthickness=1,
+            font=("Segoe UI", 8),
+        ).pack(fill=tk.X, pady=(0, 4))
+
+        tk.Checkbutton(
+            cam_card,
+            text="🔄 Intercambiar: Panorámica en Primer Plano cuando nadie interactúe",
+            variable=self.auto_swap_cam2_var,
+            bg=theme_card,
+            fg="#f8fafc",
+            selectcolor="#0b0f19",
+            activebackground=theme_card,
+            font=("Segoe UI", 8),
+            anchor="w",
+        ).pack(fill=tk.X, pady=1)
 
         tk.Button(
             cam_card,
-            text="🔄 Aplicar Cambio de Cámara",
+            text="🔄 Aplicar Configuración de Cámaras",
             command=self.start_camera_grabber,
             bg="#0284c7",
             fg="#ffffff",
@@ -676,7 +817,7 @@ class PortalLiteApp:
             font=("Segoe UI", 8, "bold"),
             pady=4,
             cursor="hand2",
-        ).pack(fill=tk.X, pady=(2, 0))
+        ).pack(fill=tk.X, pady=(4, 0))
 
         # --- TARJETA 4: ENFOQUE SUAVE & CINEMÁTICA IA ---
         ai_card = _make_card("👁️ 4. Zooms Dinámicos y Enfoque Suave IA", accent="#8b5cf6")
@@ -786,8 +927,10 @@ class PortalLiteApp:
     def on_close(self):
         self.save_config()
         self.running = False
-        if self.grabber:
-            self.grabber.stop()
+        if self.grabber1:
+            self.grabber1.stop()
+        if self.grabber2:
+            self.grabber2.stop()
         if self.mesh_node:
             self.mesh_node.stop()
         self.root.destroy()
