@@ -80,11 +80,15 @@ class PortalLiteApp:
         self.pip_self_var = tk.BooleanVar(value=False)
 
         self.status_banner_var = tk.StringVar(value="Iniciando Portal Lite 24/7...")
+        self.target_peer_ip_var = tk.StringVar(value="")
 
         self._load_config()
 
         # Componentes Core
         self.mesh_node = MultiPeerMeshNode()
+        target_ip_val = self.target_peer_ip_var.get().strip()
+        if target_ip_val:
+            self.mesh_node.set_target_peers([target_ip_val])
         self.pipeline = LiteVideoPipeline(self.models_dir)
         self.grabber: Optional[UniversalCameraGrabber] = None
 
@@ -158,6 +162,10 @@ class PortalLiteApp:
                 self.max_zoom_var.set(float(cfg["max_zoom"]))
             if "mirror_mode" in cfg:
                 self.mirror_mode_var.set(bool(cfg["mirror_mode"]))
+            if "target_peer_ip" in cfg:
+                tip = str(cfg["target_peer_ip"]).strip()
+                if not tip.startswith("Auto"):
+                    self.target_peer_ip_var.set(tip)
         except Exception:
             pass
 
@@ -184,6 +192,7 @@ class PortalLiteApp:
                 "smooth_omega": float(self.smooth_omega_var.get()),
                 "max_zoom": float(self.max_zoom_var.get()),
                 "mirror_mode": bool(self.mirror_mode_var.get()),
+                "target_peer_ip": self.target_peer_ip_var.get().strip() or "Auto-Descubrimiento LAN P2P (24/7)",
             })
             with open(self.config_path, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, indent=2, ensure_ascii=False)
@@ -484,7 +493,7 @@ class PortalLiteApp:
 
         win = tk.Toplevel(self.root)
         win.title("Ajustes de Videollamada 24/7 (Audio, Cámara y Enfoque)")
-        win.geometry("540x620")
+        win.geometry("560x730")
         win.configure(bg="#0b0f19", padx=16, pady=14)
         win.transient(self.root)
 
@@ -503,8 +512,54 @@ class PortalLiteApp:
             body.pack(fill=tk.X)
             return body
 
-        # --- TARJETA 1: CONEXIÓN DE AUDIO (MICRÓFONO Y PARLANTE) ---
-        aud_card = _make_card("🔊 1. Micrófono y Parlante (Altavoz)", accent="#10b981")
+        # --- TARJETA 1: ENLACE P2P Y CONEXIÓN DIRECTA POR IP ---
+        net_card = _make_card("🌐 1. Conexión de Red P2P (Llamada 1 a 1)", accent="#38bdf8")
+
+        my_ips = [ip for ip in self.mesh_node.local_ips if not ip.startswith("127.")]
+        my_ips_str = ", ".join(my_ips) if my_ips else "Detectando..."
+        my_ip_row = tk.Frame(net_card, bg=theme_card)
+        my_ip_row.pack(fill=tk.X, pady=(0, 4))
+        tk.Label(my_ip_row, text="Mi IP Local (Compártela con el otro usuario):", bg=theme_card, fg="#94a3b8", font=("Segoe UI", 8)).pack(side=tk.LEFT)
+        tk.Label(my_ip_row, text=my_ips_str, bg=theme_card, fg="#38bdf8", font=("Segoe UI", 9, "bold")).pack(side=tk.RIGHT)
+
+        tip_row = tk.Frame(net_card, bg=theme_card)
+        tip_row.pack(fill=tk.X, pady=2)
+        tk.Label(tip_row, text="IP del Otro Equipo:", bg=theme_card, fg="#f8fafc", font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT)
+        tk.Entry(
+            tip_row,
+            textvariable=self.target_peer_ip_var,
+            bg="#0b0f19",
+            fg="#f8fafc",
+            relief=tk.FLAT,
+            highlightbackground=theme_border,
+            highlightcolor="#38bdf8",
+            highlightthickness=1,
+            font=("Segoe UI", 9),
+            width=20,
+        ).pack(side=tk.LEFT, padx=6)
+
+        def _do_direct_connect():
+            target = self.target_peer_ip_var.get().strip()
+            if target:
+                self.mesh_node.set_target_peers([target])
+                self.save_config()
+                threading.Thread(target=lambda: self.mesh_node.connect_to_peer(target), daemon=True).start()
+
+        tk.Button(
+            tip_row,
+            text="🔗 Conectar Directo",
+            command=_do_direct_connect,
+            bg="#0284c7",
+            fg="#ffffff",
+            relief=tk.FLAT,
+            font=("Segoe UI", 8, "bold"),
+            padx=8,
+            pady=2,
+            cursor="hand2",
+        ).pack(side=tk.RIGHT)
+
+        # --- TARJETA 2: CONEXIÓN DE AUDIO (MICRÓFONO Y PARLANTE) ---
+        aud_card = _make_card("🔊 2. Micrófono y Parlante (Altavoz)", accent="#10b981")
 
         mic_row = tk.Frame(aud_card, bg=theme_card)
         mic_row.pack(fill=tk.X, pady=2)
@@ -582,8 +637,8 @@ class PortalLiteApp:
             cursor="hand2",
         ).pack(side=tk.RIGHT)
 
-        # --- TARJETA 2: ENTRADA DE CÁMARA UNIVERSAL ---
-        cam_card = _make_card("📷 2. Selección de Cámara", accent="#38bdf8")
+        # --- TARJETA 3: ENTRADA DE CÁMARA UNIVERSAL ---
+        cam_card = _make_card("📷 3. Selección de Cámara", accent="#38bdf8")
 
         tk.Label(cam_card, text="Tipo de Cámara:", bg=theme_card, fg="#94a3b8", font=("Segoe UI", 8)).pack(anchor="w")
         cam_mode_cb = ttk.Combobox(
@@ -623,8 +678,8 @@ class PortalLiteApp:
             cursor="hand2",
         ).pack(fill=tk.X, pady=(2, 0))
 
-        # --- TARJETA 3: ENFOQUE SUAVE & CINEMÁTICA IA ---
-        ai_card = _make_card("👁️ 3. Zooms Dinámicos y Enfoque Suave IA", accent="#8b5cf6")
+        # --- TARJETA 4: ENFOQUE SUAVE & CINEMÁTICA IA ---
+        ai_card = _make_card("👁️ 4. Zooms Dinámicos y Enfoque Suave IA", accent="#8b5cf6")
 
         tk.Checkbutton(
             ai_card,

@@ -71,6 +71,18 @@ class MultiPeerMeshNode:
         self.audio_engine = AudioStreamEngine(on_local_audio_chunk=self._broadcast_audio_chunk)
         self.audio_udp_sock: Optional[socket.socket] = None
 
+        # Lista de IPs destino manuales (para cuando los switches corporativos bloquean UDP Broadcast)
+        self.manual_target_ips: List[str] = []
+
+    def set_target_peers(self, ips: List[str]):
+        clean = []
+        for ip in ips:
+            s = str(ip).strip()
+            if s and not s.startswith("Auto") and s not in self.local_ips and not s.startswith("127."):
+                if s not in clean:
+                    clean.append(s)
+        self.manual_target_ips = clean
+
     def start(self):
         if self.running:
             return
@@ -140,6 +152,9 @@ class MultiPeerMeshNode:
                     parts = lip.split(".")
                     if len(parts) == 4 and parts[0] != "127":
                         targets.add(f"{parts[0]}.{parts[1]}.{parts[2]}.255")
+                for m_ip in list(self.manual_target_ips):
+                    if m_ip:
+                        targets.add(m_ip)
 
                 for t_ip in targets:
                     try:
@@ -207,6 +222,18 @@ class MultiPeerMeshNode:
     def _mesh_auto_join_loop(self):
         """Mantiene enlazados a todos los miembros de la red hasta un máximo de 3 participantes (nosotros + 2)."""
         while self.running:
+            # 1. Conexión continua a las IPs manuales fijas (por si los switches corporativos bloquean Broadcast UDP)
+            for m_ip in list(self.manual_target_ips):
+                if not m_ip or m_ip in self.local_ips or m_ip.startswith("127."):
+                    continue
+                with self.conns_lock:
+                    already = m_ip in self.active_conns
+                    now_count = len(self.active_conns)
+                if not already and now_count < self.MAX_PEERS:
+                    self.connect_to_peer(m_ip, self.VIDEO_TCP_PORT, f"Participante ({m_ip})")
+                    time.sleep(0.3)
+
+            # 2. Conexión a pares descubiertos dinámicamente por Broadcast LAN
             if self.auto_join:
                 with self.conns_lock:
                     current_count = len(self.active_conns)
